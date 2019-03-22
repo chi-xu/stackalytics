@@ -29,6 +29,17 @@ REQUEST_COUNT_LIMIT = 20
 SSH_ERRORS_LIMIT = 10
 
 
+def get_socket_tuple_from_uri(uri):
+    stripped = re.sub(GERRIT_URI_PREFIX, '', uri)
+    if stripped:
+        hostname, semicolon, port = stripped.partition(':')
+        if not port:
+            port = DEFAULT_PORT
+    else:
+        raise RcsException('Invalid rcs uri %s' % uri)
+    return hostname, port
+
+
 class RcsException(Exception):
     pass
 
@@ -57,13 +68,7 @@ class Gerrit(Rcs):
     def __init__(self, uri):
         super(Gerrit, self).__init__()
 
-        stripped = re.sub(GERRIT_URI_PREFIX, '', uri)
-        if stripped:
-            self.hostname, semicolon, self.port = stripped.partition(':')
-            if not self.port:
-                self.port = DEFAULT_PORT
-        else:
-            raise RcsException('Invalid rcs uri %s' % uri)
+        self.hostname, self.port = get_socket_tuple_from_uri(uri)
 
         self.key_filename = None
         self.username = None
@@ -80,7 +85,7 @@ class Gerrit(Rcs):
         self.close()
 
     def setup(self, **kwargs):
-        self.key_filename = kwargs.get('key_filename')
+        self.key_filename = kwargs.get('key_filename') or None
         self.username = kwargs.get('username')
         self.ssh_errors_limit = kwargs.get('gerrit_retry') or SSH_ERRORS_LIMIT
 
@@ -99,13 +104,13 @@ class Gerrit(Rcs):
                       exc_info=True)
             raise RcsException('Failed to connect to gerrit: %s' % e)
 
-    def _get_cmd(self, project_organization, module, branch, age=0,
-                 status=None, limit=PAGE_LIMIT, grab_comments=False):
+    def _get_cmd(self, repo_name, branch, age=0, status=None,
+                 limit=PAGE_LIMIT, grab_comments=False):
         cmd = ('gerrit query --all-approvals --patch-sets --format JSON '
-               'project:\'%(ogn)s/%(module)s\' branch:%(branch)s '
+               'project:\'%(repo_name)s\' branch:%(branch)s '
                'limit:%(limit)s age:%(age)ss' %
-               {'ogn': project_organization, 'module': module,
-                'branch': branch, 'limit': limit, 'age': age})
+               {'repo_name': repo_name, 'branch': branch, 'limit': limit,
+                'age': age})
         if status:
             cmd += ' status:%s' % status
         if grab_comments:
@@ -139,7 +144,7 @@ class Gerrit(Rcs):
         raise RcsException('Too many SSH errors, aborting. Consider '
                            'increasing "gerrit_retry" value')
 
-    def _poll_reviews(self, project_organization, module, branch,
+    def _poll_reviews(self, repo_name, module, branch,
                       last_retrieval_time, status=None, grab_comments=False):
         age = 0
         proceed = True
@@ -152,8 +157,7 @@ class Gerrit(Rcs):
         processed = set()
 
         while proceed:
-            cmd = self._get_cmd(project_organization, module, branch,
-                                age=age, status=status,
+            cmd = self._get_cmd(repo_name, branch, age=age, status=status,
                                 grab_comments=grab_comments)
             LOG.debug('Executing command: %s', cmd)
             exec_result = self._exec_command_with_retrial(cmd)
@@ -182,8 +186,11 @@ class Gerrit(Rcs):
                 review['module'] = module
                 yield review
 
-    def get_project_list(self):
-        exec_result = self._exec_command_with_retrial('gerrit ls-projects')
+    def get_project_list(self, pattern=None):
+        cmd = 'gerrit ls-projects'
+        if pattern:
+            cmd += ' -r %s' % pattern
+        exec_result = self._exec_command_with_retrial(cmd)
         if not exec_result:
             raise RcsException("Gerrit returned no projects")
         stdin, stdout, stderr = exec_result
@@ -196,7 +203,7 @@ class Gerrit(Rcs):
         # poll reviews down from top between last_r_t and current_r_t
         LOG.debug('Poll reviews for module: %s', repo['module'])
         for review in self._poll_reviews(
-                repo['organization'], repo['module'], branch,
+                repo['repo_name'], repo['module'], branch,
                 last_retrieval_time, status=status,
                 grab_comments=grab_comments):
             yield review

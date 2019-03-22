@@ -30,10 +30,10 @@ INFINITY_HTML = '&#x221E;'
 
 def _extend_author_fields(record):
     record['author_link'] = make_link(
-        record['author_name'], '/',
+        record['author_name'], '',
         {'user_id': record['user_id'], 'company': ''})
     record['company_link'] = make_link(
-        record['company_name'], '/',
+        record['company_name'], '',
         {'company': record['company_name'], 'user_id': ''})
 
 
@@ -41,7 +41,7 @@ def _extend_record_common_fields(record):
     _extend_author_fields(record)
     record['date_str'] = format_datetime(record['date'])
     record['module_link'] = make_link(
-        record['module'], '/',
+        record['module'], '',
         {'module': record['module'], 'company': '', 'user_id': ''})
     record['blueprint_id_count'] = len(record.get('blueprint_id', []))
     record['bug_id_count'] = len(record.get('bug_id', []))
@@ -124,7 +124,7 @@ def extend_user(user):
     if user['companies']:
         company_name = get_current_company(user)
         user['company_link'] = make_link(
-            company_name, '/', {'company': company_name, 'user_id': ''})
+            company_name, '', {'company': company_name, 'user_id': ''})
     else:
         user['company_link'] = ''
 
@@ -286,7 +286,7 @@ def make_link(title, uri=None, options=None):
     if param_values:
         uri += '?' + '&'.join(['%s=%s' % (n, utils.safe_encode(v))
                                for n, v in six.iteritems(param_values)])
-    return '<a href="%(uri)s">%(title)s</a>' % {'uri': uri, 'title': title}
+    return {'uri': uri, 'title': title}
 
 
 def make_blueprint_link(module, name):
@@ -297,6 +297,9 @@ def make_blueprint_link(module, name):
 def make_commit_message(record):
     s = record['message']
     module = record['module']
+    # NOTE(aostapenko) Keeping default value here not to brake links
+    # with existing storage data
+    gerrit_hostname = record.get('gerrit_hostname', 'review.openstack.org')
 
     s = utils.format_text(s)
 
@@ -307,8 +310,10 @@ def make_commit_message(record):
     s = re.sub(re.compile('(bug[\s#:]*)([\d]{5,7})', flags=re.IGNORECASE),
                r'\1<a href="https://bugs.launchpad.net/bugs/\2" '
                r'class="ext_link">\2</a>', s)
+    # NOTE(aostapenko) Setting http here as it's common practice to redirect
+    # http -> https, but not vice versa
     s = re.sub(r'\s+(I[0-9a-f]{40})',
-               r' <a href="https://review.openstack.org/#/q/\1" '
+               r' <a href="http://%s/#/q/\1" ' % gerrit_hostname +
                r'class="ext_link">\1</a>', s)
 
     s = utils.unwrap_text(s)

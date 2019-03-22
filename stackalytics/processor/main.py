@@ -71,10 +71,14 @@ def _merge_commits(original, new):
         return True
 
 
-def _record_typer(record_iterator, record_type):
+def _param_adder(record_iterator, key, value):
     for record in record_iterator:
-        record['record_type'] = record_type
+        record[key] = value
         yield record
+
+
+def _record_typer(record_iterator, record_type):
+    return _param_adder(record_iterator, 'record_type', record_type)
 
 
 def _get_repo_branches(repo):
@@ -112,8 +116,12 @@ def _process_repo_bugs(repo, runtime_storage_inst, record_processor_inst):
                                     current_date)
 
 
-def _process_repo_reviews(repo, runtime_storage_inst, record_processor_inst,
-                          rcs_inst):
+def _process_repo_reviews(repo, runtime_storage_inst, record_processor_inst):
+    rcs_inst = rcs.get_rcs(repo['gerrit_uri'])
+    rcs_inst.setup(key_filename=repo['key_filename'],
+                   username=repo['ssh_username'],
+                   gerrit_retry=CONF.gerrit_retry)
+
     for branch in _get_repo_branches(repo):
         LOG.info('Processing reviews for repo: %s, branch: %s',
                  repo['uri'], branch)
@@ -137,10 +145,15 @@ def _process_repo_reviews(repo, runtime_storage_inst, record_processor_inst,
                                          utils.merge_records)
         runtime_storage_inst.set_by_key(rcs_key, current_retrieval_time)
 
+    rcs_inst.close()
+
 
 def _process_repo_vcs(repo, runtime_storage_inst, record_processor_inst):
     vcs_inst = vcs.get_vcs(repo, CONF.sources_root)
     vcs_inst.fetch()
+    gerrit_hostname, _ = rcs.get_socket_tuple_from_uri(
+        repo.get('gerrit_uri', CONF.review_uri)
+    )
 
     for branch in _get_repo_branches(repo):
         LOG.info('Processing commits in repo: %s, branch: %s',
@@ -151,7 +164,10 @@ def _process_repo_vcs(repo, runtime_storage_inst, record_processor_inst):
         last_id = runtime_storage_inst.get_by_key(vcs_key)
 
         commit_iterator = vcs_inst.log(branch, last_id)
-        commit_iterator_typed = _record_typer(commit_iterator, 'commit')
+        commit_iterator_review = _param_adder(
+            commit_iterator, 'gerrit_hostname', gerrit_hostname
+        )
+        commit_iterator_typed = _record_typer(commit_iterator_review, 'commit')
         processed_commit_iterator = record_processor_inst.process(
             commit_iterator_typed)
         runtime_storage_inst.set_records(
@@ -161,8 +177,7 @@ def _process_repo_vcs(repo, runtime_storage_inst, record_processor_inst):
         runtime_storage_inst.set_by_key(vcs_key, last_id)
 
 
-def _process_repo(repo, runtime_storage_inst, record_processor_inst,
-                  rcs_inst):
+def _process_repo(repo, runtime_storage_inst, record_processor_inst):
     LOG.info('Processing repo: %s', repo['uri'])
 
     _process_repo_vcs(repo, runtime_storage_inst, record_processor_inst)
@@ -171,9 +186,9 @@ def _process_repo(repo, runtime_storage_inst, record_processor_inst,
 
     _process_repo_blueprints(repo, runtime_storage_inst, record_processor_inst)
 
-    if 'has_gerrit' in repo:
+    if 'gerrit_uri' in repo:
         _process_repo_reviews(repo, runtime_storage_inst,
-                              record_processor_inst, rcs_inst)
+                              record_processor_inst)
 
 
 def _process_mail_list(uri, runtime_storage_inst, record_processor_inst):
@@ -224,16 +239,8 @@ def _post_process_records(record_processor_inst, repos):
 def process(runtime_storage_inst, record_processor_inst):
     repos = utils.load_repos(runtime_storage_inst)
 
-    rcs_inst = rcs.get_rcs(CONF.review_uri)
-    rcs_inst.setup(key_filename=CONF.ssh_key_filename,
-                   username=CONF.ssh_username,
-                   gerrit_retry=CONF.gerrit_retry)
-
     for repo in repos:
-        _process_repo(repo, runtime_storage_inst, record_processor_inst,
-                      rcs_inst)
-
-    rcs_inst.close()
+        _process_repo(repo, runtime_storage_inst, record_processor_inst)
 
     LOG.info('Processing mail lists')
     mail_lists = runtime_storage_inst.get_by_key('mail_lists') or []

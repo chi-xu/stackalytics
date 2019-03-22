@@ -25,8 +25,8 @@ CONNECTION_OPTS = [
 
 PROCESSOR_OPTS = [
     cfg.StrOpt('default-data-uri',
-               default='https://git.openstack.org/cgit/'
-                       'openstack/stackalytics/plain/etc/default_data.json',
+               default='https://raw.githubusercontent.com/stackalytics/'
+                       'default_data/master/default_data.json',
                help='URI for default data. A local file can be used with the '
                     'prefix "file://". For example, '
                     'default_data_uri = file:///path/to/default_data.json'),
@@ -46,6 +46,10 @@ PROCESSOR_OPTS = [
                help='SSH key for gerrit review system access'),
     cfg.StrOpt('ssh-username', default='user',
                help='SSH username for gerrit review system access'),
+    cfg.StrOpt('github-login', default=None,
+               help='Login for github access'),
+    cfg.StrOpt('github-password', default=None,
+               help='Password for github access'),
     cfg.StrOpt('translation-team-uri',
                default='https://git.openstack.org/cgit/openstack/i18n/'
                        'plain/tools/zanata/translation_team.yaml',
